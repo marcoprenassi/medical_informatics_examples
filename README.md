@@ -11,8 +11,8 @@ Requires:
     - PySimpleGUI for the graphical interface
     - also the UMLS personal API Key ([link](https://documentation.uts.nlm.nih.gov/rest/authentication.html)):
       
-    1. Quickstart:  
-   > import UMLS_Api_search_example as UAe 
-   > 
-   > UAex.runExample("[INSERT API KEY HERE]")
+    1. Quickstart  
+       import UMLS_Api_search_example as UAex  
+       UAex.runExample("[INSERT API KEY HERE]")  
+       
 
