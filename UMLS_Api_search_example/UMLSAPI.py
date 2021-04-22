@@ -55,13 +55,9 @@ class APIKeyRequest:
             file_pointer = open(Config.ticket_granting_ticket_filename, 'r+')
         except FileNotFoundError:
             try:
-                file_pointer = open('TGT.txt', 'w')
-                print('Ticket Granting Ticket non found, creating new file: TGT.txt')
-                url_st = self.post()
-                json.dump([datetime.datetime.now().isoformat(), url_st], file_pointer)
-                file_pointer.close()
+                url_st = self.creating_new_TGT_file('Ticket Granting Ticket non found, creating new file: TGT.txt')
                 return url_st
-            except ValueError:
+            except IOError:
                 print('TGT.txt not found and folder not accessible')
         try:
             json_ticket_granting_ticket = json.load(file_pointer)
@@ -80,14 +76,27 @@ class APIKeyRequest:
                 else:
                     print("Request still valid until ", (time_before + datetime.timedelta(hours=8)).isoformat())
                     return json_ticket_granting_ticket[1]
-        except IOError:
-            print(ValueError.args, "  Something bad happened")
-        finally:
+        except json.JSONDecodeError:
+            url_st = self.creating_new_TGT_file('Ticket Granting Ticket not working, creating new file: TGT.txt')
+            return url_st
+
+    def creating_new_TGT_file(self,message):
+        try:
+            file_pointer = open('TGT.txt', 'w')
+            print(message)
+            url_st = self.post()
+            json.dump([datetime.datetime.now().isoformat(), url_st], file_pointer)
             file_pointer.close()
+            return url_st
+        except IOError:
+            print('TGT.txt not found and folder not accessible')
+
 
     def post(self):
         data = "apikey=" + self.api_key
         apiKeyRequestObject = requests.post(RESTUrlAndHeader.url_target, headers=RESTUrlAndHeader.headers, data=data)
+        if apiKeyRequestObject.status_code != 201:
+            return
         soup = BeautifulSoup(apiKeyRequestObject.text, features="html.parser")
         tag = soup.form
         url_st = tag.attrs['action']
@@ -96,6 +105,11 @@ class APIKeyRequest:
 
 # APISingleTicket: POST to get the service single ticket from the
 # ticket-granting ticket, single operation
+def reset_tgt_file():
+    with open(Config.ticket_granting_ticket_filename, 'w') as file_pointer:
+        file_pointer.write('')
+
+
 class APISingleTicket:
     api_key = None
     apiKeyRequestObject = None
@@ -107,7 +121,17 @@ class APISingleTicket:
 
     def ticket(self):
         url_st = self.apiKeyRequestObject.check_ticket_granting_ticket()
-        resp_post_st = requests.post(url_st, headers=RESTUrlAndHeader.headers, data=RESTUrlAndHeader.data)
+        if url_st is None:
+            return
+        try:
+            resp_post_st = requests.post(url_st, headers=RESTUrlAndHeader.headers, data=RESTUrlAndHeader.data)
+        except (requests.exceptions.ConnectionError,requests.exceptions.InvalidURL):
+            print("Connection Error, resetting the TGT.txt file, if not fixed check the connection")
+            reset_tgt_file()
+            url_st = self.apiKeyRequestObject.check_ticket_granting_ticket()
+        finally:
+            resp_post_st = requests.post(url_st, headers=RESTUrlAndHeader.headers, data=RESTUrlAndHeader.data)
+
         return resp_post_st.text
 
 
@@ -134,13 +158,29 @@ class UMLSAPI:
         cui_name = cui_def['name']
         print(json.dumps(cui_def) + " --- " + json.dumps(cui_name))
 
-    def search(self, search_term):
-        # GET CUI from term (a new ST should be requested!)
+    def search_do(self,search_term):
         ticket_string = self.apiSingleTicketObject.ticket()
+        if ticket_string is None:
+            print("Ticket Granting Ticket not granted, check connection and API KEY")
+            exit(1)
         base_get_url = RESTUrlAndHeader.search_page_url + search_term + "&ticket=" + ticket_string
         resp_get_term = requests.get(base_get_url)
-        term_response = resp_get_term.json()
-        response_result = term_response['result']
+        return resp_get_term.json()
+
+    def search(self, search_term):
+        # GET CUI from term (a new ST should be requested!)
+        term_response = self.search_do(search_term=search_term)
+        try:
+            response_result = term_response['result']
+        except KeyError:
+            print("Bad response, trying to regenerate the Ticket Granting Ticket...")
+            reset_tgt_file()
+            try:
+              response_result = self.search_do(search_term=search_term)['result']
+            except:
+                print("Failed, check the API KEY and connection")
+                exit(1)
+
         result_list = response_result['results']
         self.result_list_dataframe = pd.DataFrame(result_list)
         return result_list
